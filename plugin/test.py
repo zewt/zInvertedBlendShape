@@ -99,13 +99,12 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
             matrixes.append(hMatrix.inputValue().asMatrix())
         return matrixes
 
+    # XXX: Cache the forwards and inverted matrix list
+    # XXX: Cache this data, and invalidate when the matrix list changes
     def get_one_tweak_from_inverted(self, data, start_index):
         """
         Given the current invertedTweak, return the current tweak data.
         """
-        # XXX: This is called from set_internal.  Is it safe to query our values here?
-        # XXX: Cache the forwards and inverted matrix list
-        # XXX: Cache this data, and invalidate when the matrix list changes
         matrixes = self.get_matrixes(data)
 
         invertedTweakData = data.inputArrayValue(self.attrInvertedTweak)
@@ -135,9 +134,6 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
         """
         Given the current invertedTweak, return the current tweak data.
         """
-        # XXX: This is called from set_internal.  Is it safe to query our values here?
-        # XXX: Cache the forwards and inverted matrix list
-        # XXX: Cache this data, and invalidate when the matrix list changes
         matrixes = self.get_matrixes(data)
 
         invertedTweakData = data.inputArrayValue(self.attrInvertedTweak)
@@ -151,7 +147,9 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
             delta = OpenMaya.MVector(*delta)
 
             if idx < len(matrixes):
-                delta *= matrixes[idx]
+                mat = matrixes[idx]
+                mat = mat.inverse()
+                delta *= mat
 
             element = builder.addElement(idx)
             element.set3Float(delta.x, delta.y, delta.z)
@@ -189,40 +187,32 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
 
         This is used when updating tweak for a new pose.
         """
-        print 'derive'
-#                handle = OpenMaya.MArrayDataHandle(handle)
-#                print 'XXX main top'
-#                builder = handle.builder()
-#                values = self.get_tweak_array_from_inverted(data, builder)
-#                handle.set(builder)
+        dataBlock = self._forceCache()
+
+        outputTweak = dataBlock.outputArrayValue(self.attrTweak)
+        builder = outputTweak.builder()
+
+        values = self.get_tweak_array_from_inverted(dataBlock, builder)
+        outputTweak.set(builder)
+        outputTweak.setAllClean()
 
     def compute(self, plug, data):
-#        print 'Compute: %s, %i, %i' % (plug.info(), plug.isElement(), plug.isChild())
         # We have to handle updating invertedTweak for both elements of the array and the
         # array itself, or things won't update reliably.
-#        if plug.isChild() and plug.parent() == self.attrTweak:
-#            print 'calc tweak child'
-#            data.setClean(plug)
-#            return
+#        print 'Compute: %s, %i, %i' % (plug.info(), plug.isElement(), plug.isChild())
+        if plug.isChild() and plug.parent() == self.attrInvertedTweak:
+            # log('Compute inverted')
+            tweakData = data.inputArrayValue(self.attrTweak)
+            self.set_inverted_from_tweak(data, tweakData)
+            # log('Done compute inverted')
+            return
 
-#        if plug == self.attrInvertedTweak:
-#            print 'calc tweak'
-#            data.setClean(plug)
-#            return
-
-#        if plug.isChild() and plug.parent() == self.attrInvertedTweak:
-#            # log('Compute inverted')
-#            tweakData = data.inputArrayValue(self.attrTweak)
-#            self.set_inverted_from_tweak(data, tweakData)
-#            # log('Done compute inverted')
-#            return
-#
-#        if plug == self.attrInvertedTweak:
-#            # log('Compute inverted outer')
-#            tweakData = data.inputArrayValue(self.attrTweak)
-#            self.set_inverted_from_tweak(data, tweakData)
-#            # log('Done compute inverted outer')
-#            return
+        if plug == self.attrInvertedTweak:
+            # log('Compute inverted outer')
+            tweakData = data.inputArrayValue(self.attrTweak)
+            self.set_inverted_from_tweak(data, tweakData)
+            # log('Done compute inverted outer')
+            return
 
         if plug == OpenMayaMPx.cvar.MPxGeometryFilter_outputGeom:
             # log('Compute geom')
@@ -250,10 +240,6 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
 
             invertedTweakData = data.inputArrayValue(testDeformer.attrInvertedTweak)
 
-
-
-
-
             # This is a simple relative tweak.  In fact, we should be able to just connect our
             # .invertedTweak plug to the vlist input of a tweak node, but Maya is bad at connecting
             # arrays.
@@ -276,115 +262,15 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
 
         return super(testDeformer, self).compute(plug, data)
 
-#    def setDependentsDirty(self, plug, affectedPlugs):
-#        log('dirty: %s' % plug.info())
-
-#        if plug == self.attrTweak:
-#            wtf = OpenMaya.MPlug(self.thisMObject(), self.attrInvertedTweak)
-#            if wtf.numElements() > 0:
-#                wtf = wtf.elementByLogicalIndex(0)
-#                log('--> %s' % wtf.info())
-#                affectedPlugs.append(wtf)
-                
-#        return super(testDeformer, self).setDependentsDirty(plug, affectedPlugs)
-
-
-#    def setInternalValueInContext(self, plug, handle, context):
-#        try:
-#            if plug == self.attrRecalculateTweak:
-#                self.deriveCurrentTweak()
-#        except Exception as e:
-#            print 'setInternalValueInContext error: %s' % e
-#            traceback.print_exc()
-#
-#        return super(testDeformer, self).setInternalValueInContext(plug, handle, context)
-
     def setInternalValueInContext(self, plug, handle, context):
-        print 'set', plug.info(), plug.isElement(), plug.isChild()
         try:
-            if plug.isChild() and plug.parent() == self.attrTweak:
-                # This is setting .attrTweak[n].  Do we need to implement this?
-                print 'Unhandled setting of %s' % plug.info()
-                return
-
-            if plug == self.attrTweak:
-                print 'Set element', plug.info(), plug.isElement(), plug.isChild()
-                if plug.isElement():
-                    # This is setting ".attrTweak[n].x".  Do we need to implement this?
-                    print 'Unhandled setting of %s' % plug.info()
-                    return
-
-                # Set the whole tweak array.  This is how manipulators set tweak data.
-                handle = OpenMaya.MArrayDataHandle(handle)
-                data = self._forceCache()
-                self.set_inverted_from_tweak(data, handle)
-                return
+            if plug == self.attrRecalculateTweak:
+                self.deriveCurrentTweak()
         except Exception as e:
             print 'setInternalValueInContext error: %s' % e
             traceback.print_exc()
 
         return super(testDeformer, self).setInternalValueInContext(plug, handle, context)
-
-    def getInternalValueInContext(self, plug, handle, context):
-        # Exceptions from this function tend to hard crash Maya.
-        try:
-#            print 'get', plug.info(), plug.isElement(), plug.isChild()
-            # Shape nodes read the .tweak when modifying points, so they can change it and send us the
-            # new tweak values.  Our native data is inverted tweak and we don't save tweak to disk, but
-            # we do need to be able to calculate it based on .invertedTweak and the current pose so we
-            # can give it to the shape node.
-            if plug.isChild() and plug.parent() == self.attrTweak:
-                # This is a request for a single dimension of .tweak, eg. .tweak[100].x.
-                idx = plug.parent().logicalIndex()
-                data = self._forceCache()
-                value = self.get_one_tweak_from_inverted(data, start_index=idx)
-
-                # XXX: This is a request for eg. .tweak[100].x.  What's the intended way to find out which
-                # element this is?  The child plugs for k3float arrays are added implicitly and I can't
-                # find the MObject representing them.
-                def getChildIndex(plug):
-                    parent = plug.parent()
-                    for idx in xrange(parent.numChildren()):
-                        child = parent.child(idx)
-                        if plug == child:
-                            return idx
-                    return -1
-
-                child_idx = getChildIndex(plug)
-                if child_idx == -1:
-                    print 'Unexpected plug %s' % plug.info()
-                    return
-
-                print 'Plug %s, idx %i, element %i, value %f' % (plug.info(), idx, child_idx, value[child_idx])
-#                print '%s value: %f' % (plug.info(), value[child_idx])
-                handle.setFloat(value[child_idx])
-                return
-
-            if plug == self.attrTweak:
-                # This is one of:
-                # .tweak
-                # .tweak[100]
-                data = self._forceCache()
-                if plug.isElement():
-                    idx = plug.logicalIndex()
-                    value = self.get_one_tweak_from_inverted(data, start_index=idx)
-                    print 'Plug %s, idx %i, value %f %f %f' % (plug.info(), idx, value.x, value.y, value.z)
-                    handle.set3Float(value.x, value.y, value.z)
-                    return
-
-                # Someone queried .tweak itself, and not one of its elements.
-                handle = OpenMaya.MArrayDataHandle(handle)
-                print 'XXX main top'
-                builder = handle.builder()
-                values = self.get_tweak_array_from_inverted(data, builder)
-                handle.set(builder)
-                return
-
-        except Exception as e:
-            print 'getInternalValueInContext error: %s' % e
-            traceback.print_exc()
-
-        return super(testDeformer, self).getInternalValueInContext(plug, handle, context)
 
     def jumpToElement(self, hArray, index):
         """@brief Jumps an array handle to a logical index and uses the builder if necessary.
@@ -430,13 +316,11 @@ def initialize():
     testDeformer.attrTweak = nAttr.createPoint('tweak', 'twk')
     nAttr.setArray(True)
     nAttr.setUsesArrayDataBuilder(True)
-#    nAttr.setCached(False)
     nAttr.setStorable(False)
-    nAttr.setInternal(True)
     testDeformer.addAttribute(testDeformer.attrTweak)
     # We don't actually need to declare that tweak affects invertedTweak, since this is
     # only ever set as a property, and never derived by compute().
-#    testDeformer.attributeAffects(testDeformer.attrTweak, testDeformer.attrInvertedTweak)
+    testDeformer.attributeAffects(testDeformer.attrTweak, testDeformer.attrInvertedTweak)
     testDeformer.attributeAffects(testDeformer.attrTweak, outputGeom)
 
     # We don't use this directly.  It's used by updateInversion to remember where the base
@@ -460,36 +344,13 @@ def initialize():
     testDeformer.addAttribute(testDeformer.attrRecalculateTweak)
 
 
-#class DeformerCommands(OpenMayaMPx.MPxCommand):
-#    kPluginCmdName = 'testDeformer'
-#    def doIt(self, args):
-#        print 'go'
-#        selectionList = OpenMaya.MSelectionList()
-#        selectionList.add('testDeformer1')
-#        plug = OpenMaya.MPlug()
-#        selectionList.getPlug(0, plug)
-#        print 'plug', plug
-#
-#        depNode = OpenMaya.MFnDependencyNode(plug.node())
-#        userNode = depNode.userNode()
-#        print userNode
-#        print dir(userNode)
-##        userNode.derive_current_tweak()
-#
-#    @staticmethod
-#    def cmdCreator():
-#        return OpenMayaMPx.asMPxPtr(DeformerCommands())
-
 def initializePlugin(mobject):
     plugin = OpenMayaMPx.MFnPlugin(mobject)
     
     plugin.registerNode(testDeformer.kPluginNodeName, testDeformer.kPluginNodeId, creator,
             initialize, OpenMayaMPx.MPxNode.kDeformerNode)
-#    plugin.registerCommand(DeformerCommands.kPluginCmdName, DeformerCommands.cmdCreator)
 
 def uninitializePlugin(mobject):
     plugin = OpenMayaMPx.MFnPlugin(mobject)
     plugin.deregisterNode(testDeformer.kPluginNodeId)
-#    plugin.deregisterCommand(DeformerCommands.kPluginCmdName)
-    
 

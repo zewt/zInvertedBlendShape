@@ -106,7 +106,7 @@ def updateInversion(deformer):
 
         # We need to find out the effect that translating the blend shape vertices
         # has.  Do this by moving vertices on the actual blend shape.  We've disabled
-        # the deforme while we test this.
+        # the deformer while we test this.
 
         # The base shape data:
         basePoints = getMeshPoints(posedMesh)
@@ -145,6 +145,9 @@ def updateInversion(deformer):
             plugMatrixElement = plugMatrix.elementByLogicalIndex(i)
             plugMatrixElement.setMObject(oMatrix)
 
+        # Now that we've updated the inversion, tell the deformer to recalculate the
+        # .tweak values based on the .inverseTweak and the new .inversionMatrix.
+        cmds.setAttr('%s.recalculateTweak' % deformer, 1)
     finally:
         cmds.undoInfo(closeChunk=True)
 
@@ -179,7 +182,7 @@ def invert(base=None, name=None):
         if foc_blend_shape is None:
             raise RuntimeError, '%s has no blendShape' % base
 
-        # Duplicate the base again.  This will be the inverted shape.
+        # Duplicate the base.  This will be the inverted shape.
         # XXX: The only reason we're copying this shape is to preserve transforms.  All of the
         # shape data is being deleted or overwritten.  This could probably be simplified.
         invertedShape = clean_duplicate(base, name=name)
