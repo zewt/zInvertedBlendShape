@@ -1,9 +1,27 @@
 import maya.OpenMayaMPx as OpenMayaMPx
 import maya.OpenMaya as OpenMaya
 import pymel.core
-import math, traceback
+import math, traceback, time
 
 API_VERSION = OpenMaya.MGlobal.apiVersion()
+
+last_time = time.time()
+def log_time(s):
+    global last_time
+    delta = time.time() - last_time
+    last_time = time.time()
+    print '%f: %s' % (delta, s)
+
+if API_VERSION < 201600:
+    MPxGeometryFilter_outputGeom = OpenMayaMPx.cvar.MPxDeformerNode_outputGeom
+    MPxGeometryFilter_input = OpenMayaMPx.cvar.MPxDeformerNode_input
+    MPxGeometryFilter_inputGeom = OpenMayaMPx.cvar.MPxDeformerNode_inputGeom
+    MPxGeometryFilter_groupId = OpenMayaMPx.cvar.MPxDeformerNode_groupId
+else:
+    MPxGeometryFilter_outputGeom = outputGeom = OpenMayaMPx.cvar.MPxGeometryFilter_outputGeom
+    MPxGeometryFilter_input = OpenMayaMPx.cvar.MPxGeometryFilter_input
+    MPxGeometryFilter_inputGeom = OpenMayaMPx.cvar.MPxGeometryFilter_inputGeom
+    MPxGeometryFilter_groupId = OpenMayaMPx.cvar.MPxGeometryFilter_groupId
 
 def arrayCurrentIndex(array):
     try:
@@ -15,6 +33,24 @@ def arrayCurrentIndex(array):
 
 def advance_array_to_index(array, idx):
     """
+    Advance array forwards until its index is >= idx.  Return true
+    if the value was found, or false if we've advanced beyond it because
+    the index doesn't exist.
+
+    This is intended to be used when advancing two arrays in parallel.
+    """
+    while arrayCurrentIndex(array) < idx:
+        try:
+            array.next()
+        except RuntimeError as e:
+            # We've advanced beyond the end of the array.
+            return False
+
+    return arrayCurrentIndex(array) == idx
+
+def advance_geometry_iterator_to_index(array, idx):
+    """
+    The same as advance_array_to_index, but for geometry iterators.
     Advance array forwards until its index is >= idx.  Return true
     if the value was found, or false if we've advanced beyond it because
     the index doesn't exist.
@@ -68,44 +104,38 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
     kPluginNodeName = "testDeformer"
     kPluginNodeId = OpenMaya.MTypeId(0x00115809)
     aMatrix = OpenMaya.MObject()
-    aActivate = OpenMaya.MObject()
     attrInvertedTweak = OpenMaya.MObject()
 
-#    def setInternalValueInContext(self, plug, handle, ctx):
-#        try:
-#            print 'set', plug.info(), handle
-#            array = OpenMaya.MUintArray()
-#            handle.acceptedTypeIds(array)
-#            print array
-#        except Exception as e:
-#            print 'error', e
-##        print handle, ctx
-#        return False
+    def __init__(self):
+        super(testDeformer, self).__init__()
+        self.inversionMatricesDirty = True
 
-
-    def get_matrixes(self, data):
-        if API_VERSION < 201600:
-            inputAttribute = OpenMayaMPx.cvar.MPxDeformerNode_input
-            inputGeom = OpenMayaMPx.cvar.MPxDeformerNode_inputGeom
-        else:
-            inputAttribute = OpenMayaMPx.cvar.MPxGeometryFilter_input
-            inputGeom = OpenMayaMPx.cvar.MPxGeometryFilter_inputGeom
+    def get_matrices(self, data):
+        # This is accessed a lot, and unlike the tweaks it always contains a value for every vertex,
+        # so retrieving this is relatively expensive.  Cache the results.
+        if not self.inversionMatricesDirty:
+            return self.cachedInversionMatrices
 
         hMatrix = data.inputArrayValue(testDeformer.aMatrix)
-        matrixElementCount = hMatrix.elementCount()
-        matrixes = []
-        for i in xrange(matrixElementCount):
-            self.jumpToElement(hMatrix, i)
-            matrixes.append(hMatrix.inputValue().asMatrix())
-        return matrixes
 
-    # XXX: Cache the forwards and inverted matrix list
-    # XXX: Cache this data, and invalidate when the matrix list changes
+        matrices = []
+        for item in iterate_array_handle(hMatrix):
+            idx = hMatrix.elementIndex()
+
+            # If this is a sparse array, fill it in.  This array is usually not sparse.
+            if idx > len(matrices):
+                matrices.append([OpenMaya.MMatrix()] * (idx - len(matrices)))
+            matrices.append(hMatrix.inputValue().asMatrix())
+
+        self.cachedInversionMatrices = matrices
+        self.inversionMatricesDirty = False 
+        return matrices
+
     def get_one_tweak_from_inverted(self, data, start_index):
         """
         Given the current invertedTweak, return the current tweak data.
         """
-        matrixes = self.get_matrixes(data)
+        matrices = self.get_matrices(data)
 
         invertedTweakData = data.inputArrayValue(self.attrInvertedTweak)
 
@@ -125,8 +155,8 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
         delta = OpenMaya.MVector(*delta)
 
         offset = delta
-        if idx < len(matrixes):
-            offset *= matrixes[idx]
+        if idx < len(matrices):
+            offset *= matrices[idx]
 
         return offset
 
@@ -134,7 +164,7 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
         """
         Given the current invertedTweak, return the current tweak data.
         """
-        matrixes = self.get_matrixes(data)
+        matrices = self.get_matrices(data)
 
         invertedTweakData = data.inputArrayValue(self.attrInvertedTweak)
 
@@ -146,8 +176,8 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
             delta = thisValue.asFloat3()
             delta = OpenMaya.MVector(*delta)
 
-            if idx < len(matrixes):
-                mat = matrixes[idx]
+            if idx < len(matrices):
+                mat = matrices[idx]
                 mat = mat.inverse()
                 delta *= mat
 
@@ -155,35 +185,38 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
             element.set3Float(delta.x, delta.y, delta.z)
 
     def set_inverted_from_tweak(self, dataBlock, tweakData):
-        matrixes = self.get_matrixes(dataBlock)
+        matrices = self.get_matrices(dataBlock)
 
         outputInvertedTweak = dataBlock.outputArrayValue(self.attrInvertedTweak)
         builder = outputInvertedTweak.builder()
 
         for item in iterate_array_handle(tweakData):
             thisValue = tweakData.inputValue()
-
-            idx = arrayCurrentIndex(tweakData)
-            newElement = builder.addElement(idx)
-
-            # log('%s' % tweakData)
-            # index = tweakData.elementIndex()
-
             delta = thisValue.asFloat3()
+
+            # Skip zero tweaks.  Most blend shapes will have small, localized changes to
+            # some part of the mesh, so we save a lot of time by not processing vertices
+            # that haven't been changed.
+            if abs(delta[0]) < 0.001 and abs(delta[1]) < 0.001 and abs(delta[2]) < 0.001:
+                continue
+
             delta = OpenMaya.MVector(*delta)
 
-            offset = delta
-            if idx < len(matrixes):
-                offset *= matrixes[idx]
-            newElement.set3Float(*offset)
+            idx = arrayCurrentIndex(tweakData)
+            if idx < len(matrices):
+                delta *= matrices[idx]
+
+            newElement = builder.addElement(idx)
+            newElement.set3Float(*delta)
 
         outputInvertedTweak.set(builder)
         outputInvertedTweak.setAllClean()
         dataBlock.setClean(self.attrInvertedTweak)
 
+       
     def deriveCurrentTweak(self):
         """
-        Set .tweak from the current values of .invertedTweak and input matrixes.
+        Set .tweak from the current values of .invertedTweak and input matrices.
 
         This is used when updating tweak for a new pose.
         """
@@ -199,7 +232,7 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
     def compute(self, plug, data):
         # We have to handle updating invertedTweak for both elements of the array and the
         # array itself, or things won't update reliably.
-#        print 'Compute: %s, %i, %i' % (plug.info(), plug.isElement(), plug.isChild())
+        # print 'Compute: %s, %i, %i' % (plug.info(), plug.isElement(), plug.isChild())
         if plug.isChild() and plug.parent() == self.attrInvertedTweak:
             # log('Compute inverted')
             tweakData = data.inputArrayValue(self.attrTweak)
@@ -214,17 +247,17 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
             # log('Done compute inverted outer')
             return
 
-        if plug == OpenMayaMPx.cvar.MPxGeometryFilter_outputGeom:
+        if plug == MPxGeometryFilter_outputGeom:
             # log('Compute geom')
 
             # We should be able to just call the base implementation of compute(), but that's broken.
             index = plug.logicalIndex()
-            hInput = data.inputArrayValue(OpenMayaMPx.cvar.MPxGeometryFilter_input)
+            hInput = data.inputArrayValue(MPxGeometryFilter_input)
             hInput.jumpToArrayElement(index)
 
             hInputElement = hInput.inputValue()	
-            hInputGeom = hInputElement.child(OpenMayaMPx.cvar.MPxGeometryFilter_inputGeom)
-            hGroup = hInputElement.child(OpenMayaMPx.cvar.MPxGeometryFilter_groupId)
+            hInputGeom = hInputElement.child(MPxGeometryFilter_inputGeom)
+            hGroup = hInputElement.child(MPxGeometryFilter_groupId)
 
             hOutput = data.outputValue(plug)
             hOutput.copy(hInputGeom)
@@ -236,24 +269,28 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
             # but it doesn't explain what the hell that means and why we can't do the normal thing.
             invertedTweakPlug = OpenMaya.MPlug(self.thisMObject(), testDeformer.attrInvertedTweak)
             invertedTweakPlug = invertedTweakPlug.elementByLogicalIndex(0)
-            obj = invertedTweakPlug.asMObject(data.context())
+            invertedTweakPlug.asMObject(data.context())
 
             invertedTweakData = data.inputArrayValue(testDeformer.attrInvertedTweak)
 
             # This is a simple relative tweak.  In fact, we should be able to just connect our
             # .invertedTweak plug to the vlist input of a tweak node, but Maya is bad at connecting
             # arrays.
-            for vertex in iterate_array(itGeo):
-                index = vertex.index()
-                pt = vertex.position()
+            points = OpenMaya.MPointArray()
+            itGeo.allPositions(points)
 
-                # Advance the vertex data until we get to the same index.
-                if not advance_array_to_index(invertedTweakData, index):
-                    continue
+            # We have the input geometry iterator, and the list of tweaks.  The tweak list is
+            # usually sparse, so loop through that rather than the geometry.
+            for tweak in iterate_array_handle(invertedTweakData):
+                index = tweak.elementIndex()
+                if index >= points.length():
+                    break
 
+                point = points[index]
                 delta = invertedTweakData.inputValue().asFloat3()
-                delta = OpenMaya.MVector(*delta)
-                vertex.setPosition(vertex.position() + delta)
+                points.set(index, point[0] + delta[0], point[1] + delta[1], point[2] + delta[2])
+
+            itGeo.setAllPositions(points)
 
             data.setClean(plug)
             # log('Done compute geom')
@@ -265,7 +302,11 @@ class testDeformer(OpenMayaMPx.MPxDeformerNode):
     def setInternalValueInContext(self, plug, handle, context):
         try:
             if plug == self.attrRecalculateTweak:
+                # This attribute is only used to trigger this recalculation.
                 self.deriveCurrentTweak()
+            elif plug == testDeformer.aMatrix:
+                # .inversionMatrices is changing, so throw away our cache.
+                self.inversionMatricesDirty = True
         except Exception as e:
             print 'setInternalValueInContext error: %s' % e
             traceback.print_exc()
@@ -296,20 +337,11 @@ def initialize():
     nAttr = OpenMaya.MFnNumericAttribute()
     cmpAttr = OpenMaya.MFnCompoundAttribute()
 
-    if API_VERSION < 201600:
-        outputGeom = OpenMayaMPx.cvar.MPxDeformerNode_outputGeom
-    else:
-        outputGeom = OpenMayaMPx.cvar.MPxGeometryFilter_outputGeom
-
-    testDeformer.aActivate = nAttr.create('activate', 'activate', OpenMaya.MFnNumericData.kBoolean)
-    testDeformer.addAttribute(testDeformer.aActivate)
-    testDeformer.attributeAffects(testDeformer.aActivate, outputGeom)
-
     testDeformer.attrInvertedTweak = nAttr.createPoint('invertedTweak', 'itwk')
     nAttr.setArray(True)
     nAttr.setUsesArrayDataBuilder(True)
     testDeformer.addAttribute(testDeformer.attrInvertedTweak)
-    testDeformer.attributeAffects(testDeformer.attrInvertedTweak, outputGeom)
+    testDeformer.attributeAffects(testDeformer.attrInvertedTweak, MPxGeometryFilter_outputGeom)
 
     # The tweak input.  This is connected to the output blend shape to receive edits.
     # Edits are inverted and saved to invertedTweak.
@@ -321,7 +353,7 @@ def initialize():
     # We don't actually need to declare that tweak affects invertedTweak, since this is
     # only ever set as a property, and never derived by compute().
     testDeformer.attributeAffects(testDeformer.attrTweak, testDeformer.attrInvertedTweak)
-    testDeformer.attributeAffects(testDeformer.attrTweak, outputGeom)
+    testDeformer.attributeAffects(testDeformer.attrTweak, MPxGeometryFilter_outputGeom)
 
     # We don't use this directly.  It's used by updateInversion to remember where the base
     # mesh was when the deformer was initially created.
@@ -330,10 +362,11 @@ def initialize():
 
     testDeformer.aMatrix = mAttr.create('inversionMatrix', 'im')
     mAttr.setArray(True)
+    mAttr.setInternal(True)
     mAttr.setUsesArrayDataBuilder(True)
     testDeformer.addAttribute(testDeformer.aMatrix)
     testDeformer.attributeAffects(testDeformer.aMatrix, testDeformer.attrTweak)
-    testDeformer.attributeAffects(testDeformer.aMatrix, outputGeom)
+#    testDeformer.attributeAffects(testDeformer.aMatrix, MPxGeometryFilter_outputGeom)
 
     # This is a hack: write to this attribute to force .tweak to be recalculated from
     # .invertedTweak.  We should use a command for this, but I can't find any way to
@@ -343,6 +376,16 @@ def initialize():
     nAttr.setInternal(True)
     testDeformer.addAttribute(testDeformer.attrRecalculateTweak)
 
+    # This attribute is only used to temporarily store the original tweak node while
+    # we're redirecting tweaks for a mesh to us.
+    #
+    # We don't really need to enable usesArrayDataBuilder since this isn't meant to
+    # actually receive data, but if it does and that's not enabled it can crash.
+    testDeformer.attrSavedTweakConnection = nAttr.createPoint('savedTweakConnection', 'stc')
+    nAttr.setArray(True)
+    nAttr.setUsesArrayDataBuilder(True)
+    nAttr.setStorable(False)
+    testDeformer.addAttribute(testDeformer.attrSavedTweakConnection)
 
 def initializePlugin(mobject):
     plugin = OpenMayaMPx.MFnPlugin(mobject)
