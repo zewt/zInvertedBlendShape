@@ -300,8 +300,8 @@ def invert(base=None, name=None):
 
     The mesh must have a front-of-chain blendShape deformer.
     """
-#    if not cmds.pluginInfo('cvShapeInverter.py', query=True, loaded=True):
-#        cmds.loadPlugin('cvShapeInverter.py')
+    if not cmds.pluginInfo('sculptableInvertedBlendShape.py', query=True, loaded=True):
+        cmds.loadPlugin('sculptableInvertedBlendShape.py')
     if not base:
         sel = cmds.ls(sl=True)
         if not sel or len(sel) != 1:
