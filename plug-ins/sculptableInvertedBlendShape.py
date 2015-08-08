@@ -353,11 +353,6 @@ def initialize():
     sculptableInvertedBlendShape.attributeAffects(sculptableInvertedBlendShape.tweak_attr, sculptableInvertedBlendShape.inverted_tweak_attr)
     sculptableInvertedBlendShape.attributeAffects(sculptableInvertedBlendShape.tweak_attr, MPxGeometryFilter_outputGeom)
 
-    # We don't use this directly.  It's used by updateInversion to remember where the base
-    # mesh was when the deformer was initially created.
-    sculptableInvertedBlendShape.posed_mesh_attr = tAttr.create('posedMesh', 'pm', OpenMaya.MFnData.kMesh)
-    sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.posed_mesh_attr)
-
     # A matrix per input vertex, giving the transform from the base shape to the current
     # pose of the mesh being sculpted.  Note that changing this will not automatically
     # update tweak_attr, since this doesn't seem to update attached tweakLocation meshes

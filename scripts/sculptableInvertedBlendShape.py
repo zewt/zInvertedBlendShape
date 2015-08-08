@@ -41,6 +41,39 @@ def _find_non_intermediate_output_mesh(node, first=True):
 
     raise RuntimeError('Couldn\'t find the output mesh for %s.' % node)
 
+def _find_sculpting_output_mesh(deformer):
+    """
+    Find the mesh to sculpt on for deformer.
+    """
+    # Find the first visible, non-intermediate mesh in the future of the inverted mesh.
+    #
+    # Some more complex rigs may have more than one non-intermediate shape.  For example,
+    # we may feed into a blend shape that feeds into a composed mesh, which itself is then
+    # a blend shape for a higher-level mesh.  Try to pick the one the user wants to actually
+    # sculpt on by paying attention to visibility, and not just intermediate.
+    inverted_mesh = _find_non_intermediate_output_mesh(deformer)
+    if inverted_mesh is None:
+        OpenMaya.MGlobal.displayWarning('Couldn\'t find the inverted mesh for %s' % deformer)
+        return None
+
+    visible_nodes = []
+    for history_node in cmds.listHistory(inverted_mesh, f=True):
+        if history_node == inverted_mesh:
+            continue
+        if cmds.nodeType(history_node) != 'mesh':
+            continue
+        if not _node_visible(history_node):
+            continue
+        visible_nodes.append(history_node)
+
+    if not visible_nodes:
+        return None
+
+    # If there's more than one visible mesh using this deformer, we might pick the wrong one.
+    if len(visible_nodes) > 1:
+        OpenMaya.MGlobal.displayWarning('More than one visible mesh uses %s.  Sculpting on: %s' % (deformer, visible_nodes[0]))
+    return visible_nodes[0]
+
 def _find_blend_shapes(node):
     # Look through history backwards, so front-of-chain blend shapes are found first.
     for history_node in reversed(cmds.listHistory(node, gl=True)):
@@ -149,6 +182,21 @@ def _set_matrix_cell(matrix, value, row, column):
     """
     OpenMaya.MScriptUtil.setDoubleArray(matrix[row], column, value)
 
+def _get_active_sculpting_mesh_for_deformer(deformer):
+    """
+    If sculpting is enabled on the deformer, return the output mesh.  Otherwise,
+    return None.
+    """
+    # If sculpting is enabled, .tweak[0] will be connected to the .tweakLocation of
+    # a mesh.
+    connections = cmds.listConnections('%s.tweak[0]' % deformer, d=True, s=False) or []
+    if len(connections) == 0:
+        return None
+    if len(connections) > 1:
+        # This isn't expected.
+        raise RuntimeError('More than one mesh points to %s.tweak[0]' % deformer)
+    return connections[0]
+
 #def find_plug_in_node(node, plugName):
 #    depNode = OpenMaya.MFnDependencyNode(node)
 #    plugs = depNode.findPlug(plugName)
@@ -252,13 +300,11 @@ def _update_inversion_for_deformer(deformer):
     if not inverted_shape:
         raise Exception('Couldn\'t find the output inverted mesh for "%s".' % deformer)
 
-    # The posedMesh connection points to the mesh that's being sculpted.  This is the original
-    # mesh that was selected when the deformer was created.
-    posed_mesh = cmds.listConnections('%s.posedMesh' % deformer, sh=True)
+    # Get the mesh that's being sculpted.
+    posed_mesh = _get_active_sculpting_mesh_for_deformer(deformer)
     if not posed_mesh:
-        OpenMaya.MGlobal.displayError('Deformer "%s" has no posedMesh connection.' % deformer)
+        OpenMaya.MGlobal.displayError('Deformer "%s" isn\'t being sculpted.' % deformer)
         return
-    posed_mesh = posed_mesh[0]
 
     # Temporarily disable the deformer.
     old_node_state = cmds.getAttr('%s.nodeState' % deformer)
@@ -380,9 +426,6 @@ def invert(base=None, name=None):
 
     cmds.undoInfo(openChunk=True)
     try:
-        base_shape = _find_visible_shape(base)
-        # print 'Base shape:', base_shape
-
         # Create a new mesh to be the inverted shape.  The base mesh will be the same as the input
         # into the blend shape.
         blend_shape_input_geometry = _get_plug_from_node('%s.input[0].inputGeometry' % foc_blend_shape)
@@ -423,15 +466,6 @@ def invert(base=None, name=None):
         # Hack: If we don't have at least one element in the array, compute() won't be called on it.
         cmds.setAttr('%s.invertedTweak[0]' % deformer, 0, 0, 0)
 
-        # Remember the base shape, so we can find it later.
-        # XXX: This may be a bit annoying.  It'll show up as an output for the base mesh, so
-        # there'll be a ton of these if you have a lot of inverted meshes.  This is used to
-        # figure out which visible mesh to attach to when enabling editing, and which output
-        # mesh to measure in update_inversion.  Could we figure this out dynamically?  It
-        # can be tricky in nontrivial rigs, eg. where the posed mesh is the immediate output
-        # of a blendShape, but that blendShape then feeds into a higher-level rig.
-        cmds.connectAttr('%s.outMesh' % base_shape, '%s.posedMesh' % deformer)
-
         # Perform the initial inversion.
         # Actually, we don't really need to do this, since we'll do it the first time the blend
         # shape is edited.  This only has an effect when modifying the tweaks.
@@ -457,37 +491,19 @@ def invert_existing(inverted=None):
 
     cmds.undoInfo(openChunk=True)
     try:
-        base_shape = None
         if not inverted:
             sel = cmds.ls(sl=True)
             if not sel or not len(sel):
-                OpenMaya.MGlobal.displayError('Select an inverted mesh, followed optionally by the output mesh')
+                OpenMaya.MGlobal.displayError('Select an inverted mesh')
                 return
 
             inverted = sel[0]
-            if len(sel) > 1:
-                base_shape = sel[1]
 
         inverted_shape = _find_visible_shape(inverted)
         if not inverted_shape:
             OpenMaya.MGlobal.displayError('Couldn\'t find a shape under %s' % inverted)
 
-        if not base_shape:
-            # If no base shape is specified, find the last non-intermediate mesh in the inverted
-            # shape's future.
-            for history_node in reversed(cmds.listHistory(inverted_shape, f=True)):
-                if cmds.nodeType(history_node) != 'mesh':
-                    continue
-                if cmds.getAttr('%s.intermediateObject' % history_node):
-                    continue
-                base_shape = history_node
-                break
-            else:
-                OpenMaya.MGlobal.displayError('Couldn\'t figure out the output mesh for %s' % inverted_shape)
-        else:
-            base_shape = _find_visible_shape(base_shape)
-
-        print 'Shape: %s Output: %s' % (inverted_shape, base_shape)
+        print 'Shape: %s' % inverted_shape
 
         # There shouldn't already be sculptableInvertedBlendShape deformer on the mesh.
         for history_node in cmds.listHistory(inverted_shape):
@@ -540,9 +556,6 @@ def invert_existing(inverted=None):
         # Hack: If we don't have at least one element in the array, compute() won't be called on it.
         cmds.setAttr('%s.invertedTweak[0]' % deformer, 0, 0, 0)
                    
-        # Remember the base shape, so we can find it later.
-        cmds.connectAttr('%s.outMesh' % base_shape, '%s.posedMesh' % deformer)
-
         # Create .invertedTweak from the inverted mesh and the original mesh.
         values = []
         for i in xrange(inverted_points.length()):
@@ -562,10 +575,36 @@ def invert_existing(inverted=None):
     finally:
         cmds.undoInfo(closeChunk=True)
 
+def _node_visible(node):
+    """
+    Return true if node is visible.
+
+    Is there a standard way to do this?
+    """
+    if not cmds.attributeQuery('visibility', node=node, exists=True):
+        return False
+
+    if not cmds.getAttr('%s.visibility' % node):
+        return False
+    if cmds.getAttr('%s.intermediateObject' % node):
+        return False
+
+    # Display layers:
+    if cmds.attributeQuery('overrideEnabled', node=node, exists=True) and cmds.getAttr('%s.overrideEnabled' % node):
+        if not cmds.getAttr('%s.overrideVisibility' % node):
+            return False
+
+    parents = cmds.listRelatives(node, parent=True) or []
+    if parents:
+        return _node_visible(parents[0])
+
+    return True
+
+
 def _enable_editing_for_deformer(deformer):
-    posed_mesh = cmds.listConnections('%s.posedMesh' % deformer, sh=True)
+    posed_mesh =  _find_sculpting_output_mesh(deformer)
     if not posed_mesh:
-        OpenMaya.MGlobal.displayError('Deformer "%s" has no posedMesh connection.' % deformer)
+        OpenMaya.MGlobal.displayError('Couldn\'t find a visible output mesh for %s to sculpt on' % deformer)
         return False
 
     # You have to have the blend shape selected to select which one to edit, but you most likely
@@ -576,11 +615,9 @@ def _enable_editing_for_deformer(deformer):
     cmds.select(posed_mesh_transform[0])
 
     # If something is already connected to our tweak input, we're already enabled.
-    if cmds.listConnections('%s.tweak[0]' % deformer, s=False, d=True):
+    if _get_active_sculpting_mesh_for_deformer(deformer):
         OpenMaya.MGlobal.displayWarning('%s is already enabled for editing' % deformer)
         return True
-
-    posed_mesh = posed_mesh[0]
 
     # We're going to connect the deformer to posedMesh's tweakLocation, but we need to
     # be able to undo this when disabling editing again.  The blend shape UI does this
@@ -641,23 +678,18 @@ def _disable_editing_for_deformer(deformer):
     inverted_mesh = cmds.listRelatives(inverted_mesh_shape, p=True)[0]
     cmds.select(inverted_mesh)
     
-    if not cmds.listConnections('%s.tweak[0]' % deformer, s=False, d=True):
+    posed_mesh = _get_active_sculpting_mesh_for_deformer(deformer)
+    if not posed_mesh:
         OpenMaya.MGlobal.displayWarning('%s isn\'t enabled for editing' % deformer)
 
         # Don't show the "disabled editing" message, so it doesn't imply that it was
         # actually enabled before.
         return False
 
-    posed_mesh = cmds.listConnections('%s.posedMesh' % deformer, sh=True)
-    if not posed_mesh:
-        OpenMaya.MGlobal.displayError('Deformer "%s" has no posedMesh connection.' % deformer)
-        return False
-    posed_mesh = posed_mesh[0]
-
-    # .tweak[0] is connected to .posedMesh's .tweakLocation.  Disconnect this connection.
+    # .tweak[0] is connected to posed_mesh's .tweakLocation.  Disconnect this connection.
     cmds.disconnectAttr('%s.tweak[0]' % deformer, '%s.tweakLocation' % posed_mesh)
 
-    # If we have a .savedTweakConnection, connect .posedMesh's .tweakLocation back to it.
+    # If we have a .savedTweakConnection, connect posed_mesh's .tweakLocation back to it.
     saved_tweak_connection = cmds.listConnections('%s.savedTweakConnection[0]' % deformer, p=True)
     if saved_tweak_connection:
         print 'Restoring', saved_tweak_connection
