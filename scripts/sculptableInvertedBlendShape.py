@@ -158,7 +158,7 @@ def _get_mesh_points(path, space=OpenMaya.MSpace.kObject):
 def _get_points(obj, space=OpenMaya.MSpace.kObject):
     itMesh = OpenMaya.MItMeshVertex(obj)
 
-    # XXX: We should be able to stop iteration when next() returns an error, but that doesn't
+    # We should be able to stop iteration when next() returns an error, but that doesn't
     # actually happen in Python for some reason.
     result = OpenMaya.MPointArray()
     for idx in xrange(0, itMesh.count()):
