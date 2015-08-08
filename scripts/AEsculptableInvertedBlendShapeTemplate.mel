@@ -1,0 +1,10 @@
+global proc AEsculptableInvertedBlendShapeTemplate(string $nodeName)
+{
+    editorTemplate -beginScrollLayout;
+    editorTemplate -suppress "plist";
+    editorTemplate -suppress "vlist";
+    AEgeometryFilterCommon $nodeName;
+    AEgeometryFilterInclude $nodeName;
+    editorTemplate -addExtraControls;
+    editorTemplate -endScrollLayout;
+}
