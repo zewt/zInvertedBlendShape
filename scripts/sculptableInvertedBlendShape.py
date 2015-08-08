@@ -17,7 +17,7 @@ def _find_deformer_for_shape(node, node_type, future=False):
     # The gl=True flag combined with pdo=True causes listHistory to only return the direct
     # history of this node, eg. it won't return blend shapes and the deformers of blend
     # shapes.
-    for history_node in cmds.listHistory(node, gl=True, pdo=True, f=future):
+    for history_node in cmds.listHistory(node, gl=True, pdo=True, f=future) or []:
         if node_type in cmds.nodeType(history_node, inherited=True):
             return history_node
 
@@ -176,25 +176,6 @@ def _set_matrix_cell(matrix, value, row, column):
 #    cmds.setAttr('%s.visibility' % shape, True)
 #
 #    return shape
-
-def _copy_mesh_data(source_mesh_attr, dest_mesh):
-    source_mesh_plug = _get_plug_from_node(source_mesh_attr)
-    dest_mesh_plug = _get_plug_from_node('%s.inMesh' % dest_mesh)
-
-    # Connect the input of the blendShape to the input of the new mesh.
-    modifier = OpenMaya.MDGModifier()
-    modifier.connect(source_mesh_plug, dest_mesh_plug)
-    modifier.doIt()
-
-    # Read the shape to force it to update, or it'll still be in its original position
-    # after we disconnect below.
-    _get_mesh_points(dest_mesh)
-
-    # Immediately disconnect it again.  We're just doing this to copy the input data of the
-    # blend shape to the new shape.
-    modifier = OpenMaya.MDGModifier()
-    modifier.disconnect(source_mesh_plug, dest_mesh_plug)
-    modifier.doIt()
 
 def _add_blend_shape(blend_shape_node, base, target):
     """
@@ -387,6 +368,13 @@ def invert(base=None, name=None):
             return
         base = sel[0]
 
+    # Find the front of chain blendShape node.
+    foc_blend_shape = _find_first_blend_shape(base)
+    # print 'Using blend shape node: %s' % foc_blend_shape
+    if foc_blend_shape is None:
+        OpenMaya.MGlobal.displayError('%s has no blendShape.' % base)
+        return
+
     if not name:
         name = '%s_inverted' % base
 
@@ -395,23 +383,21 @@ def invert(base=None, name=None):
         base_shape = _find_visible_shape(base)
         # print 'Base shape:', base_shape
 
-        # Find the front of chain blendShape node.
-        foc_blend_shape = _find_first_blend_shape(base)
-        # print 'Using blend shape node: %s' % foc_blend_shape
-        if foc_blend_shape is None:
-            OpenMaya.MGlobal.displayError('%s has no blendShape.' % base)
-            return
+        # Create a new mesh to be the inverted shape.  The base mesh will be the same as the input
+        # into the blend shape.
+        blend_shape_input_geometry = _get_plug_from_node('%s.input[0].inputGeometry' % foc_blend_shape)
+        inverted_shape_transform_node = OpenMaya.MFnMesh().copy(blend_shape_input_geometry.asMObject())
+        inverted_shape_transform = OpenMaya.MFnTransform(inverted_shape_transform_node).partialPathName()
 
-        # Create a new mesh to be the inverted shape.  Doing it this way instead of duplicating the
-        # input mesh avoids mesh tweaks (mesh.vt[*]) from being copied in, which can cause the new
-        # mesh to not be the same as the input to the blendShape.
-        inverted_shape = cmds.createNode('mesh', name='%sShape' % name)
+        # Important: The new mesh will have no shading group.  This looks like it works, but sculpting
+        # tools will get confused and the mesh will randomly begin rendering corrupt in VP2.0 if we don't
+        # assign a SG.
+        cmds.sets(inverted_shape_transform, e=True, forceElement='initialShadingGroup')
 
         # Rename the new mesh's transform.
-        inverted_shape_transform = cmds.listRelatives(inverted_shape, parent=True, pa=True)[0]
         inverted_shape_transform = cmds.rename(inverted_shape_transform, name)
 
-        # Renaming the transform may have automatically renamed the shape.
+        # Find the shape.
         inverted_shape = cmds.listRelatives(inverted_shape_transform, shapes=True, pa=True)[0]
 
         # print 'Shape node:', inverted_shape
@@ -424,9 +410,6 @@ def invert(base=None, name=None):
         cmds.xform(inverted_shape_transform, ws=True, ro=cmds.xform(base, ws=True, ro=True, q=True))
         cmds.xform(inverted_shape_transform, ws=True, t=cmds.xform(base, ws=True, t=True, q=True))
         cmds.xform(inverted_shape_transform, ws=True, s=cmds.xform(base, ws=True, s=True, q=True))
-
-        # Copy the mesh coming into the blendShape to the new mesh.
-        _copy_mesh_data('%s.input[0].inputGeometry' % foc_blend_shape, inverted_shape)
 
         blend_shape_index = _add_blend_shape(foc_blend_shape, base, inverted_shape)
 
@@ -449,7 +432,10 @@ def invert(base=None, name=None):
         # of a blendShape, but that blendShape then feeds into a higher-level rig.
         cmds.connectAttr('%s.outMesh' % base_shape, '%s.posedMesh' % deformer)
 
-        _update_inversion_for_deformer(deformer)
+        # Perform the initial inversion.
+        # Actually, we don't really need to do this, since we'll do it the first time the blend
+        # shape is edited.  This only has an effect when modifying the tweaks.
+        # _update_inversion_for_deformer(deformer)
 
         cmds.select(inverted_shape_transform)
         OpenMaya.MGlobal.displayInfo('Result: %s' % inverted_shape)
@@ -563,6 +549,7 @@ def invert_existing(inverted=None):
             delta = inverted_points[i] - blend_shape_input_points[i]
             values.append((delta.x, delta.y, delta.z))
 
+        # XXX: This is slow.
         for idx, value in enumerate(values):
             cmds.setAttr('%s.invertedTweak[%i]' % (deformer, idx), *value)
 
@@ -612,7 +599,7 @@ def _enable_editing_for_deformer(deformer):
     cmds.connectAttr('%s.tweak[0]' % deformer, '%s.tweakLocation' % posed_mesh, f=True)
 
     # Make sure the inversion is up to date.
-#    _update_inversion_for_deformer(deformer)
+    _update_inversion_for_deformer(deformer)
 
     return True
 
