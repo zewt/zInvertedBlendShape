@@ -187,12 +187,12 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
         """
         Set .tweak from the current value of .invertedTweak and input matrices.
         """
-        outputTweak = data_block.outputArrayValue(self.tweak_attr)
-        builder = outputTweak.builder()
+        output_tweak = data_block.outputArrayValue(self.tweak_attr)
+        builder = output_tweak.builder()
 
         values = self.get_tweak_array_from_inverted(data_block, builder)
-        outputTweak.set(builder)
-        outputTweak.setAllClean()
+        output_tweak.set(builder)
+        output_tweak.setAllClean()
 
     def set_inverted_from_tweak(self, data_block):
         """

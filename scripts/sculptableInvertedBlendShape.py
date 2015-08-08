@@ -557,18 +557,30 @@ def invert_existing(inverted=None):
         cmds.setAttr('%s.invertedTweak[0]' % deformer, 0, 0, 0)
                    
         # Create .invertedTweak from the inverted mesh and the original mesh.
-        values = []
-        for i in xrange(inverted_points.length()):
+        deformer_node = _get_mobject(deformer)
+        dep_node = OpenMaya.MFnDependencyNode(deformer_node)
+        inverted_tweak_attr = dep_node.attribute('invertedTweak')
+        data_block = dep_node.userNode()._forceCache()
+
+        output_tweak = data_block.outputArrayValue(inverted_tweak_attr)
+        builder = output_tweak.builder()
+
+        for idx, i in enumerate(xrange(inverted_points.length())):
             delta = inverted_points[i] - blend_shape_input_points[i]
-            values.append((delta.x, delta.y, delta.z))
 
-        # XXX: This is slow.
-        for idx, value in enumerate(values):
-            cmds.setAttr('%s.invertedTweak[%i]' % (deformer, idx), *value)
+            # Always create index 0, but skip other vertices with no change.
+            if idx != 0 and abs(delta[0]) < 0.001 and abs(delta[1]) < 0.001 and abs(delta[2]) < 0.001:
+                continue
 
-        # Set up .inversionMatrix.
-        _update_inversion_for_deformer(deformer)
+            element = builder.addElement(idx)
+            element.set3Float(delta.x, delta.y, delta.z)
+
+            # This is simpler, but slow.
+            # cmds.setAttr('%s.invertedTweak[%i]' % (deformer, idx), *delta)
             
+        output_tweak.set(builder)
+        output_tweak.setAllClean()
+
         OpenMaya.MGlobal.displayInfo('Result: %s' % deformer)
         return deformer
 
