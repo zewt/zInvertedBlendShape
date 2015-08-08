@@ -1,0 +1,37 @@
+global string $gRigDeformationsMenu;
+
+global proc string add_blend_shape_menu()
+{
+    global string $gRigDeformationsMenu;
+    setParent -m $gRigDeformationsMenu;
+    menuItem -divider true -dividerLabel "";
+    
+    menuItem -label "Pose-space Blend Shapes" -aob true -subMenu true -tearOff true PSBS;
+        menuItem -label "Create"
+                -annotation "Create a new inverted blend shape for the selected mesh"
+                -command "python \"import sculptableInvertedBlendShape; sculptableInvertedBlendShape.invert()\"";
+        menuItem -label "Add deformer"
+                -annotation "Create an inversion deformer for an existing inverted blend shape"
+                -command "python \"import sculptableInvertedBlendShape; sculptableInvertedBlendShape.invert_existing()\"";
+        menuItem -label "Enable editing"
+                -annotation "Enable sculpting for the current blend shape"
+                -command "python \"import sculptableInvertedBlendShape; sculptableInvertedBlendShape.enable_editing()\"";
+        menuItem -label "Disable editing"
+                -annotation "Disable sculpting for the current blend shape"
+                -command "python \"import sculptableInvertedBlendShape; sculptableInvertedBlendShape.disable_editing()\"";
+        menuItem -label "Update pose"
+                -annotation "Update the inversion for the selected blend shape"
+                -command "python \"import sculptableInvertedBlendShape; sculptableInvertedBlendShape.update_inversion()\"";
+    setParent -m ..;
+    
+    return "delete_blend_shape_menu()";
+}
+
+global proc delete_blend_shape_menu()
+{
+    deleteUI -mi PSBS;
+}
+
+global string $add_blend_shape_menu_var = "";
+addMenuItemSafe($gRigDeformationsMenu, "add_blend_shape_menu", "add_blend_shape_menu_var");
+
