@@ -102,7 +102,7 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
 
     def __init__(self):
         super(sculptableInvertedBlendShape, self).__init__()
-        self.inversion_matrices_dirty = True
+        self.cached_inversion_matrices = None
 
     def get_matrices(self, data_block):
         """
@@ -112,7 +112,7 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
         """
         # This is accessed a lot, and unlike the tweaks it always contains a value for every vertex,
         # so retrieving this is relatively expensive.  Cache the results.
-        if not self.inversion_matrices_dirty:
+        if self.cached_inversion_matrices is not None:
             return self.cached_inversion_matrices
 
         matrix_array = data_block.inputArrayValue(sculptableInvertedBlendShape.matrix_attr)
@@ -127,7 +127,6 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
             matrices.append(matrix_array.inputValue().asMatrix())
 
         self.cached_inversion_matrices = matrices
-        self.inversion_matrices_dirty = False 
         return matrices
 
     def get_one_tweak_from_inverted(self, data_block, start_index):
@@ -304,7 +303,7 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
                 self.set_tweak_from_inverted(self._forceCache())
             elif plug == sculptableInvertedBlendShape.matrix_attr:
                 # .inversionMatrices is changing, so throw away our cache.
-                self.inversion_matrices_dirty = True
+                self.cached_inversion_matrices = None
         except Exception as e:
             print 'setInternalValueInContext error: %s' % e
             traceback.print_exc()

@@ -9,17 +9,37 @@ import maya.OpenMaya as OpenMaya
 import maya.OpenMayaAnim as OpenMayaAnim
 import math, time
 
-def _find_deformer_for_shape(node, node_type):
+def _find_deformer_for_shape(node, node_type, future=False):
     """
     Find a node with the class node_type in node's history.
     """
 
-    # The gl=True flag causes listHistory to only return the direct history of
-    # this node, eg. it won't return blend shapes and the deformers of blend
+    # The gl=True flag combined with pdo=True causes listHistory to only return the direct
+    # history of this node, eg. it won't return blend shapes and the deformers of blend
     # shapes.
-    for history_node in cmds.listHistory(node, gl=True):
+    for history_node in cmds.listHistory(node, gl=True, pdo=True, f=future):
         if node_type in cmds.nodeType(history_node, inherited=True):
             return history_node
+
+def _find_non_intermediate_output_mesh(node, first=True):
+    """
+    Return the first non-intermediate mesh in the future of the given node.
+
+    For the deformer, this should be the inverted mesh.  The output of the blend
+    shape is also in the future, but it comes later in the list.
+    """
+    history_nodes = cmds.listHistory(node, f=True)
+    if not first:
+        first = reversed(first)
+
+    for history_node in history_nodes:
+        if cmds.nodeType(history_node) != 'mesh':
+            continue
+        if cmds.getAttr('%s.intermediateObject' % history_node):
+            continue
+        return history_node
+
+    raise RuntimeError('Couldn\'t find the output mesh for %s.' % node)
 
 def _find_blend_shapes(node):
     # Look through history backwards, so front-of-chain blend shapes are found first.
@@ -47,9 +67,7 @@ def _find_first_blend_shape(node):
     if len(blend_shapes) == 0:
         return
 
-    first_blend_shape = blend_shapes[0]
-    print 'Using blend shape node: %s' % first_blend_shape
-    return first_blend_shape
+    return blend_shapes[0]
 
 def _get_plug_from_node(node):
     selectionList = OpenMaya.MSelectionList()
@@ -160,7 +178,6 @@ def _set_matrix_cell(matrix, value, row, column):
 #    return shape
 
 def _copy_mesh_data(source_mesh_attr, dest_mesh):
-    print 'copy', source_mesh_attr, dest_mesh
     source_mesh_plug = _get_plug_from_node(source_mesh_attr)
     dest_mesh_plug = _get_plug_from_node('%s.inMesh' % dest_mesh)
 
@@ -347,6 +364,8 @@ def update_inversion(node=None):
                 continue
 
             _update_inversion_for_deformer(deformer)
+
+            OpenMaya.MGlobal.displayInfo('Updated the inversion for %s.' % deformer)
     finally:
         cmds.undoInfo(closeChunk=True)
 
@@ -378,6 +397,7 @@ def invert(base=None, name=None):
 
         # Find the front of chain blendShape node.
         foc_blend_shape = _find_first_blend_shape(base)
+        # print 'Using blend shape node: %s' % foc_blend_shape
         if foc_blend_shape is None:
             OpenMaya.MGlobal.displayError('%s has no blendShape.' % base)
             return
@@ -424,12 +444,15 @@ def invert(base=None, name=None):
         # XXX: This may be a bit annoying.  It'll show up as an output for the base mesh, so
         # there'll be a ton of these if you have a lot of inverted meshes.  This is used to
         # figure out which visible mesh to attach to when enabling editing, and which output
-        # mesh to measure in update_inversion.  Could we figure this out dynamically?
+        # mesh to measure in update_inversion.  Could we figure this out dynamically?  It
+        # can be tricky in nontrivial rigs, eg. where the posed mesh is the immediate output
+        # of a blendShape, but that blendShape then feeds into a higher-level rig.
         cmds.connectAttr('%s.outMesh' % base_shape, '%s.posedMesh' % deformer)
 
-        update_inversion(deformer)
+        _update_inversion_for_deformer(deformer)
 
         cmds.select(inverted_shape_transform)
+        OpenMaya.MGlobal.displayInfo('Result: %s' % inverted_shape)
         return inverted_shape
 
     finally:
@@ -516,6 +539,9 @@ def invert_existing(inverted=None):
         # Find this mesh's blend shape index.
         # XXX: How to do this?  There might be other deformers like createColorSet between
         # us and the blend shape, and the attribute hierarchy for blendShape is fairly complex.
+        # We can use listHistory to find the node just before the blendShape and between
+        # it and us, but that won't tell us which plug it's connected to the blendShape with.
+        # List them all?
         # blend_shape_index = _add_blend_shape(foc_blend_shape, base, inverted_shape)
         #
         # Enable the blend shape.  If the blend shape isn't enabled, update_inversion won't be
@@ -541,23 +567,32 @@ def invert_existing(inverted=None):
             cmds.setAttr('%s.invertedTweak[%i]' % (deformer, idx), *value)
 
         # Set up .inversionMatrix.
-        update_inversion(deformer)
+        _update_inversion_for_deformer(deformer)
             
+        OpenMaya.MGlobal.displayInfo('Result: %s' % deformer)
         return deformer
 
     finally:
         cmds.undoInfo(closeChunk=True)
 
 def _enable_editing_for_deformer(deformer):
+    posed_mesh = cmds.listConnections('%s.posedMesh' % deformer, sh=True)
+    if not posed_mesh:
+        OpenMaya.MGlobal.displayError('Deformer "%s" has no posedMesh connection.' % deformer)
+        return False
+
+    # You have to have the blend shape selected to select which one to edit, but you most likely
+    # want to actually edit the shape now, so select the transform for the output mesh.  In the
+    # unlikely case that there are multiple instances, we'll just pick one.  Do this even if the
+    # blend shape is already selected for editing.
+    posed_mesh_transform = cmds.listRelatives(posed_mesh, p=True)
+    cmds.select(posed_mesh_transform[0])
+
     # If something is already connected to our tweak input, we're already enabled.
     if cmds.listConnections('%s.tweak[0]' % deformer, s=False, d=True):
         OpenMaya.MGlobal.displayWarning('%s is already enabled for editing' % deformer)
         return True
 
-    posed_mesh = cmds.listConnections('%s.posedMesh' % deformer, sh=True)
-    if not posed_mesh:
-        OpenMaya.MGlobal.displayError('Deformer "%s" has no posedMesh connection.' % deformer)
-        return False
     posed_mesh = posed_mesh[0]
 
     # We're going to connect the deformer to posedMesh's tweakLocation, but we need to
@@ -575,11 +610,17 @@ def _enable_editing_for_deformer(deformer):
     # Now connect our tweak attribute to the mesh's tweakLocation, overwriting any existing connection.
     existing_connections = cmds.listConnections('%s.savedTweakConnection' % deformer)
     cmds.connectAttr('%s.tweak[0]' % deformer, '%s.tweakLocation' % posed_mesh, f=True)
+
+    # Make sure the inversion is up to date.
+#    _update_inversion_for_deformer(deformer)
+
     return True
 
 def enable_editing(node=None):
     """
     Enable editing an inverted blend shape.
+
+    The inversion matrices will also be updated.
     """
     if node is not None:
         nodes = [node]
@@ -587,7 +628,7 @@ def enable_editing(node=None):
         nodes = cmds.ls(sl=True)
         
     if not nodes:
-        OpenMaya.MGlobal.displayError('Select a blend shape')
+        OpenMaya.MGlobal.displayError('Select an inverted blend shape')
         return
 
     cmds.undoInfo(openChunk=True)
@@ -607,6 +648,12 @@ def enable_editing(node=None):
         cmds.undoInfo(closeChunk=True)
 
 def _disable_editing_for_deformer(deformer):
+    # Select the inverted blend shape, so we're symmetrical with what enable_editing does.
+    # That way, enable_editing and disable_editing toggles back and forth cleanly.
+    inverted_mesh_shape = _find_non_intermediate_output_mesh('%s.outputGeometry[0]' % deformer)
+    inverted_mesh = cmds.listRelatives(inverted_mesh_shape, p=True)[0]
+    cmds.select(inverted_mesh)
+    
     if not cmds.listConnections('%s.tweak[0]' % deformer, s=False, d=True):
         OpenMaya.MGlobal.displayWarning('%s isn\'t enabled for editing' % deformer)
 
