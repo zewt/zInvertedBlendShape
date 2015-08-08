@@ -360,6 +360,7 @@ def initialize():
     sculptableInvertedBlendShape.matrix_attr = mAttr.create('inversionMatrix', 'im')
     mAttr.setArray(True)
     mAttr.setInternal(True)
+    nAttr.setStorable(False)
     mAttr.setUsesArrayDataBuilder(True)
     sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.matrix_attr)
     # sculptableInvertedBlendShape.attributeAffects(sculptableInvertedBlendShape.matrix_attr, sculptableInvertedBlendShape.tweak_attr)
