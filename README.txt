@@ -5,6 +5,11 @@ but it's not compatible with Maya 2016's in-place blend shape sculpting.
 This means that you need to have separate inverted and uninverted meshes,
 sculpt the uninverted mesh, and you can't change the pose when editing.
 
+Install by copying sculptableInvertedBlendShape.mod into Maya's modules
+directory and setting the correct path, and adding this to your userSetup.mel:
+
+    source "startup/sculptableInvertedBlendShapeMenu.mel";
+
 To create an inverted blend shape, first create a front-of-chain blend shape
 deformer on your mesh.  Then, select your mesh and run:
 
