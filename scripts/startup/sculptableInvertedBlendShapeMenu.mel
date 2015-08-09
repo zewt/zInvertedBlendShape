@@ -6,7 +6,7 @@ global proc string add_blend_shape_menu()
     setParent -m $gRigDeformationsMenu;
     menuItem -divider true -dividerLabel "";
     
-    menuItem -label "Pose-space Blend Shapes" -aob true -subMenu true -tearOff true PSBS;
+    menuItem -label "Inverted Blend Shapes" -aob true -subMenu true -tearOff true PSBS;
         menuItem -label "Create"
                 -annotation "Create a new inverted blend shape for the selected mesh"
                 -command "python \"import sculptableInvertedBlendShape; sculptableInvertedBlendShape.invert()\"";

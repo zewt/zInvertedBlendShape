@@ -121,10 +121,12 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
         for item in iterate_array_handle(matrix_array):
             idx = matrix_array.elementIndex()
 
-            # If this is a sparse array, fill it in.  This array is usually not sparse.
+            # If this is a sparse array, fill it in.
             if idx > len(matrices):
-                matrices.append([OpenMaya.MMatrix()] * (idx - len(matrices)))
-            matrices.append(matrix_array.inputValue().asMatrix())
+                matrices.extend([OpenMaya.MMatrix()] * (idx - len(matrices)))
+
+            matrix = matrix_array.inputValue().asMatrix()
+            matrices.append(matrix)
 
         self.cached_inversion_matrices = matrices
         return matrices
@@ -245,6 +247,12 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
         # array itself, or things won't update reliably.
         # print 'Compute: %s, %i, %i' % (plug.info(), plug.isElement(), plug.isChild())
         if plug == self.inverted_tweak_attr or (plug.isChild() and plug.parent() == self.inverted_tweak_attr):
+            # When the tweak input is changed, invert the change and store it in invertedTweak.
+            # However, only do this if editing is enabled.  We need to do this, or we'll clobber
+            # invertedTweak on load when compute is first called.
+            inverted_tweak_plug = OpenMaya.MPlug(self.thisMObject(), self.enable_tweak_attr)
+            if not inverted_tweak_plug.asBool():
+                return
             self.set_inverted_from_tweak(data)
             return
 
@@ -310,6 +318,20 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
 
         return super(sculptableInvertedBlendShape, self).setInternalValueInContext(plug, handle, context)
 
+    def shouldSave(self, plug, isSaving):
+        # Some attributes are derived when editing is turned on.  Only save these attributes
+        # while editing is still enabled.  These attributes are fairly large, so we avoid
+        # bloating the save file by not saving them if we don't need them.
+        #
+        # This doesn't seem to work.  It asks us whether we want to save the plug, then
+        # saves it anyway.
+        inverted_tweak_plug = OpenMaya.MPlug(self.thisMObject(), self.enable_tweak_attr)
+        if not inverted_tweak_plug.asBool():
+            if plug in (self.matrix_attr, self.tweak_attr):
+                return False
+        
+        return super(sculptableInvertedBlendShape, self).shouldSave(plug, isSaving)
+
     def jumpToElement(self, hArray, index):
         """@brief Jumps an array handle to a logical index and uses the builder if necessary.
 
@@ -348,7 +370,6 @@ def initialize():
     sculptableInvertedBlendShape.tweak_attr = nAttr.createPoint('tweak', 'twk')
     nAttr.setArray(True)
     nAttr.setUsesArrayDataBuilder(True)
-    nAttr.setStorable(False)
     sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.tweak_attr)
     sculptableInvertedBlendShape.attributeAffects(sculptableInvertedBlendShape.tweak_attr, sculptableInvertedBlendShape.inverted_tweak_attr)
     sculptableInvertedBlendShape.attributeAffects(sculptableInvertedBlendShape.tweak_attr, MPxGeometryFilter_outputGeom)
@@ -360,10 +381,14 @@ def initialize():
     sculptableInvertedBlendShape.matrix_attr = mAttr.create('inversionMatrix', 'im')
     mAttr.setArray(True)
     mAttr.setInternal(True)
-    nAttr.setStorable(False)
     mAttr.setUsesArrayDataBuilder(True)
     sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.matrix_attr)
     # sculptableInvertedBlendShape.attributeAffects(sculptableInvertedBlendShape.matrix_attr, sculptableInvertedBlendShape.tweak_attr)
+
+    # If true, we're currently sculpting.  Changes to .tweak will be inverted and copied
+    # to .invertedTweak.
+    sculptableInvertedBlendShape.enable_tweak_attr = nAttr.create('enableTweak', 'et', OpenMaya.MFnNumericData.kBoolean)
+    sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.enable_tweak_attr)
 
     # This is a hack: write to this attribute to force .tweak to be recalculated from
     # .invertedTweak.  We should use a command for this, but I can't find any way to
@@ -382,7 +407,6 @@ def initialize():
     sculptableInvertedBlendShape.saved_tweak_connection_attr = nAttr.createPoint('savedTweakConnection', 'stc')
     nAttr.setArray(True)
     nAttr.setUsesArrayDataBuilder(True)
-    nAttr.setStorable(False)
     sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.saved_tweak_connection_attr)
 
 def initializePlugin(mobject):

@@ -9,37 +9,40 @@ import maya.OpenMaya as OpenMaya
 import maya.OpenMayaAnim as OpenMayaAnim
 import math, time
 
-def _find_deformer_for_shape(node, node_type, future=False):
+def _find_inverted_shape_for_deformer(deformer):
     """
-    Find a node with the class node_type in node's history.
-    """
-
-    # The gl=True flag combined with pdo=True causes listHistory to only return the direct
-    # history of this node, eg. it won't return blend shapes and the deformers of blend
-    # shapes.
-    for history_node in cmds.listHistory(node, gl=True, pdo=True, f=future) or []:
-        if node_type in cmds.nodeType(history_node, inherited=True):
-            return history_node
-
-def _find_non_intermediate_output_mesh(node, first=True):
-    """
-    Return the first non-intermediate mesh in the future of the given node.
+    Return the first non-intermediate mesh in the future of the given deformer.
 
     For the deformer, this should be the inverted mesh.  The output of the blend
     shape is also in the future, but it comes later in the list.
     """
-    history_nodes = cmds.listHistory(node, f=True)
-    if not first:
-        first = reversed(first)
+    # We want to trace the output path through .outputGeometry[0].  listHistory won't
+    # actually do this, since it only works on nodes and not plugs.  Follow .outputGeometry[0]
+    # to the next node and start from there.  This can still fail if there are deformers
+    # between our deformer and the geometry that have other output connections, since listHistory
+    # will follow them too and may find another mesh.  Typically we shouldn't have any extra
+    # stuff in between anyway, but Maya likes to insert garbage createColorSet nodes everywhere.
+    # Those don't have other output connections to interfere with this.
+    outputGeometry = cmds.listConnections('%s.outputGeometry[0]' % deformer) or []
+    if not outputGeometry:
+        raise RuntimeError('Couldn\'t find the inverted output mesh for %s.' % deformer)
+
+    history_nodes = cmds.listHistory(outputGeometry[0], f=True)
 
     for history_node in history_nodes:
         if cmds.nodeType(history_node) != 'mesh':
             continue
         if cmds.getAttr('%s.intermediateObject' % history_node):
             continue
+
+        # We should always find the mesh before we hit a deformer.  This makes sure
+        # that we don't go too far forward and start messing with the real mesh.
+        if set(cmds.nodeType(history_node, inherited=True)) & {'geometryFilter', 'deformer'}:
+            raise RuntimeError('Found deformer %s before the inverted mesh for deformer %s' % (node, deformer))
+
         return history_node
 
-    raise RuntimeError('Couldn\'t find the output mesh for %s.' % node)
+    raise RuntimeError('Couldn\'t find the output mesh for %s.' % deformer)
 
 def _find_sculpting_output_mesh(deformer):
     """
@@ -51,7 +54,7 @@ def _find_sculpting_output_mesh(deformer):
     # we may feed into a blend shape that feeds into a composed mesh, which itself is then
     # a blend shape for a higher-level mesh.  Try to pick the one the user wants to actually
     # sculpt on by paying attention to visibility, and not just intermediate.
-    inverted_mesh = _find_non_intermediate_output_mesh(deformer)
+    inverted_mesh = _find_inverted_shape_for_deformer(deformer)
     if inverted_mesh is None:
         OpenMaya.MGlobal.displayWarning('Couldn\'t find the inverted mesh for %s' % deformer)
         return None
@@ -167,16 +170,16 @@ def _get_points(obj, space=OpenMaya.MSpace.kObject):
         
     return result
 
-def _set_matrix_row(matrix, newVector, row):
+def _set_matrix_row(matrix, row, newVector):
     """
     Sets a matrix row with an MVector or MPoint.
     """
-    _set_matrix_cell(matrix, newVector.x, row, 0)
-    _set_matrix_cell(matrix, newVector.y, row, 1)
-    _set_matrix_cell(matrix, newVector.z, row, 2)
+    _set_matrix_cell(matrix, row, 0, newVector.x)
+    _set_matrix_cell(matrix, row, 1, newVector.y)
+    _set_matrix_cell(matrix, row, 2, newVector.z)
 
 
-def _set_matrix_cell(matrix, value, row, column):
+def _set_matrix_cell(matrix, row, column, value):
     """
     Set a matrix cell.
     """
@@ -241,22 +244,6 @@ def _add_blend_shape(blend_shape_node, base, target):
     # Return the target index.
     return next_index
 
-def _find_inverted_shape_for_deformer(deformer):
-    """
-    Given a deformer, find the output inverted shape.
-    """
-    for node in cmds.listHistory(deformer, f=True):
-        if node == deformer:
-            continue
-        if cmds.nodeType(node) == 'mesh':
-            return node
-
-        # We should always find the mesh before we hit a deformer.  This makes sure
-        # that we don't go too far forward and start messing with the real mesh.
-        if set(cmds.nodeType(node, inherited=True)) & {'geometryFilter', 'deformer'}:
-            print 'Found deformer %s before the inverted mesh for deformer %s' % (node, deformer)
-            return None
-
 def _find_deformer(node):
     """
     Find a deformer from a node associated with it.
@@ -277,9 +264,9 @@ def _find_deformer(node):
             return connections[0]
 
         # See if this is an output inverted blend shape mesh.
-        deformer = _find_deformer_for_shape(node, 'sculptableInvertedBlendShape')
-        if deformer:
-            return deformer
+        for history_node in cmds.listHistory(node, gl=True, pdo=True) or []:
+            if 'sculptableInvertedBlendShape' in cmds.nodeType(history_node, inherited=True):
+                return history_node
 
     return None
 
@@ -356,9 +343,9 @@ def _update_inversion_for_deformer(deformer):
 
     for i in xrange(basePoints.length()):
         matrix = OpenMaya.MMatrix()
-        _set_matrix_row(matrix, xPoints[i] - basePoints[i], 0)
-        _set_matrix_row(matrix, yPoints[i] - basePoints[i], 1)
-        _set_matrix_row(matrix, zPoints[i] - basePoints[i], 2)
+        _set_matrix_row(matrix, 0, xPoints[i] - basePoints[i])
+        _set_matrix_row(matrix, 1, yPoints[i] - basePoints[i])
+        _set_matrix_row(matrix, 2, zPoints[i] - basePoints[i])
         matrix = matrix.inverse()
 
         matrix_node = fnMatrixData.create(matrix)
@@ -466,11 +453,6 @@ def invert(base=None, name=None):
         # Hack: If we don't have at least one element in the array, compute() won't be called on it.
         cmds.setAttr('%s.invertedTweak[0]' % deformer, 0, 0, 0)
 
-        # Perform the initial inversion.
-        # Actually, we don't really need to do this, since we'll do it the first time the blend
-        # shape is edited.  This only has an effect when modifying the tweaks.
-        # _update_inversion_for_deformer(deformer)
-
         cmds.select(inverted_shape_transform)
         OpenMaya.MGlobal.displayInfo('Result: %s' % inverted_shape)
         return inverted_shape
@@ -512,7 +494,7 @@ def invert_existing(inverted=None):
                 return
 
         # Find the blendShape that the mesh feeds into.
-        for history_node in cmds.listHistory(inverted_shape, f=True):
+        for history_node in cmds.listHistory(inverted_shape, f=True, gl=True, pdo=True):
             if 'blendShape' not in cmds.nodeType(history_node, inherited=True):
                 continue
 
@@ -537,18 +519,6 @@ def invert_existing(inverted=None):
         # coming into the blend shape.  The inverted shape will be applied by the deformer.
         inverted_points_iterator = _get_geometry_iterator(inverted_shape)
         inverted_points_iterator.setAllPositions(blend_shape_input_points, OpenMaya.MSpace.kObject)
-
-        # Find this mesh's blend shape index.
-        # XXX: How to do this?  There might be other deformers like createColorSet between
-        # us and the blend shape, and the attribute hierarchy for blendShape is fairly complex.
-        # We can use listHistory to find the node just before the blendShape and between
-        # it and us, but that won't tell us which plug it's connected to the blendShape with.
-        # List them all?
-        # blend_shape_index = _add_blend_shape(foc_blend_shape, base, inverted_shape)
-        #
-        # Enable the blend shape.  If the blend shape isn't enabled, update_inversion won't be
-        # able to figure out how changes to the blend shape affect the output mesh.
-        # cmds.setAttr('%s.weight[%i]' % (foc_blend_shape, blend_shape_index), 1)
 
         # Create the deformer.
         deformer = cmds.deformer(inverted_shape, type='sculptableInvertedBlendShape')[0]
@@ -647,6 +617,9 @@ def _enable_editing_for_deformer(deformer):
     existing_connections = cmds.listConnections('%s.savedTweakConnection' % deformer)
     cmds.connectAttr('%s.tweak[0]' % deformer, '%s.tweakLocation' % posed_mesh, f=True)
 
+    # Enable propagation of .tweak to .invertedTweak.
+    cmds.setAttr('%s.enableTweak' % deformer, True)
+
     # Make sure the inversion is up to date.
     _update_inversion_for_deformer(deformer)
 
@@ -686,7 +659,7 @@ def enable_editing(node=None):
 def _disable_editing_for_deformer(deformer):
     # Select the inverted blend shape, so we're symmetrical with what enable_editing does.
     # That way, enable_editing and disable_editing toggles back and forth cleanly.
-    inverted_mesh_shape = _find_non_intermediate_output_mesh('%s.outputGeometry[0]' % deformer)
+    inverted_mesh_shape = _find_inverted_shape_for_deformer(deformer)
     inverted_mesh = cmds.listRelatives(inverted_mesh_shape, p=True)[0]
     cmds.select(inverted_mesh)
     
@@ -708,6 +681,8 @@ def _disable_editing_for_deformer(deformer):
         saved_tweak_connection = saved_tweak_connection[0]
         cmds.connectAttr(saved_tweak_connection, '%s.tweakLocation' % posed_mesh)
         cmds.disconnectAttr(saved_tweak_connection, '%s.savedTweakConnection[0]' % deformer)
+
+    cmds.setAttr('%s.enableTweak' % deformer, False)
 
     return True
 
