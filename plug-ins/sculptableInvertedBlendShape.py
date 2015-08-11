@@ -96,9 +96,7 @@ def iterate_array_handle(array):
             break
 
 class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
-    # I haven't requested an ID block yet.  For now use a number in the devkit sample
-    # range, so it won't conflict with anything important or anyone's internal use IDs.
-    pluginNodeId = OpenMaya.MTypeId(0xEA520)
+    pluginNodeId = OpenMaya.MTypeId(0x124740)
 
     def __init__(self):
         super(sculptableInvertedBlendShape, self).__init__()
