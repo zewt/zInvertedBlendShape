@@ -8,11 +8,11 @@ sculpt the uninverted mesh, and you can't change the pose when editing.
 Installation
 ------------
 
-Install by copying sculptableInvertedBlendShape.mod into Maya's modules
+Install by copying invertedBlendShape.mod into Maya's modules
 directory and setting the correct path, and adding this to your userSetup.mel:
 
 ```
-source "startup/sculptableInvertedBlendShapeMenu.mel";
+source "zInvertedBlendShapeMenu.mel";
 ```
 
 An "Inverted Blend Shape" menu will be added to the rigging Deform menu.

@@ -95,11 +95,11 @@ def iterate_array_handle(array):
         except RuntimeError as e:
             break
 
-class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
+class zInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
     pluginNodeId = OpenMaya.MTypeId(0x124740)
 
     def __init__(self):
-        super(sculptableInvertedBlendShape, self).__init__()
+        super(zInvertedBlendShape, self).__init__()
         self.cached_inversion_matrices = None
 
     def get_matrices(self, data_block):
@@ -113,7 +113,7 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
         if self.cached_inversion_matrices is not None:
             return self.cached_inversion_matrices
 
-        matrix_array = data_block.inputArrayValue(sculptableInvertedBlendShape.matrix_attr)
+        matrix_array = data_block.inputArrayValue(zInvertedBlendShape.matrix_attr)
 
         matrices = []
         for item in iterate_array_handle(matrix_array):
@@ -272,11 +272,11 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
             # we're supposed to, it won't update.  The basicBlendShape.cpp sample does this, saying
             # "inputPointsTarget is computed on pull, so can't just read it out of the datablock",
             # but it doesn't explain what the hell that means and why we can't do the normal thing.
-            inverted_tweak_plug = OpenMaya.MPlug(self.thisMObject(), sculptableInvertedBlendShape.inverted_tweak_attr)
+            inverted_tweak_plug = OpenMaya.MPlug(self.thisMObject(), zInvertedBlendShape.inverted_tweak_attr)
             inverted_tweak_plug = inverted_tweak_plug.elementByLogicalIndex(0)
             inverted_tweak_plug.asMObject(data.context())
 
-            inverted_tweak_data = data.inputArrayValue(sculptableInvertedBlendShape.inverted_tweak_attr)
+            inverted_tweak_data = data.inputArrayValue(zInvertedBlendShape.inverted_tweak_attr)
 
             # This is a simple relative tweak.  In fact, we should be able to just connect our
             # .invertedTweak plug to the vlist input of a tweak node, but Maya is bad at connecting
@@ -300,21 +300,21 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
             data.setClean(plug)
             return
 
-        return super(sculptableInvertedBlendShape, self).compute(plug, data)
+        return super(zInvertedBlendShape, self).compute(plug, data)
 
     def setInternalValueInContext(self, plug, handle, context):
         try:
             if plug == self.recalculate_tweak_attr:
                 # This attribute is only used to trigger this recalculation.
                 self.set_tweak_from_inverted(self._forceCache())
-            elif plug == sculptableInvertedBlendShape.matrix_attr:
+            elif plug == zInvertedBlendShape.matrix_attr:
                 # .inversionMatrices is changing, so throw away our cache.
                 self.cached_inversion_matrices = None
         except Exception as e:
             print 'setInternalValueInContext error: %s' % e
             traceback.print_exc()
 
-        return super(sculptableInvertedBlendShape, self).setInternalValueInContext(plug, handle, context)
+        return super(zInvertedBlendShape, self).setInternalValueInContext(plug, handle, context)
 
     def shouldSave(self, plug, isSaving):
         # Some attributes are derived when editing is turned on.  Only save these attributes
@@ -328,7 +328,7 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
             if plug in (self.matrix_attr, self.tweak_attr):
                 return False
         
-        return super(sculptableInvertedBlendShape, self).shouldSave(plug, isSaving)
+        return super(zInvertedBlendShape, self).shouldSave(plug, isSaving)
 
     def jumpToElement(self, hArray, index):
         """@brief Jumps an array handle to a logical index and uses the builder if necessary.
@@ -346,7 +346,7 @@ class sculptableInvertedBlendShape(OpenMayaMPx.MPxDeformerNode):
 
 
 def creator():
-    return OpenMayaMPx.asMPxPtr(sculptableInvertedBlendShape())
+    return OpenMayaMPx.asMPxPtr(zInvertedBlendShape())
 
 def initialize():
     mAttr = OpenMaya.MFnMatrixAttribute()
@@ -356,63 +356,63 @@ def initialize():
 
     # The main, stored data of the deformer, as a list of tweaks (vertex deltas) for the input
     # geometry.
-    sculptableInvertedBlendShape.inverted_tweak_attr = nAttr.createPoint('invertedTweak', 'itwk')
+    zInvertedBlendShape.inverted_tweak_attr = nAttr.createPoint('invertedTweak', 'itwk')
     nAttr.setArray(True)
     nAttr.setUsesArrayDataBuilder(True)
-    sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.inverted_tweak_attr)
-    sculptableInvertedBlendShape.attributeAffects(sculptableInvertedBlendShape.inverted_tweak_attr, MPxGeometryFilter_outputGeom)
+    zInvertedBlendShape.addAttribute(zInvertedBlendShape.inverted_tweak_attr)
+    zInvertedBlendShape.attributeAffects(zInvertedBlendShape.inverted_tweak_attr, MPxGeometryFilter_outputGeom)
 
     # The tweak input.  This is connected to the output blend shape to receive edits.
     # Edits are inverted and saved to invertedTweak, and this can be read to retrieve
     # the tweaks relative to the current inversion matrices.
-    sculptableInvertedBlendShape.tweak_attr = nAttr.createPoint('tweak', 'twk')
+    zInvertedBlendShape.tweak_attr = nAttr.createPoint('tweak', 'twk')
     nAttr.setArray(True)
     nAttr.setUsesArrayDataBuilder(True)
-    sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.tweak_attr)
-    sculptableInvertedBlendShape.attributeAffects(sculptableInvertedBlendShape.tweak_attr, sculptableInvertedBlendShape.inverted_tweak_attr)
-    sculptableInvertedBlendShape.attributeAffects(sculptableInvertedBlendShape.tweak_attr, MPxGeometryFilter_outputGeom)
+    zInvertedBlendShape.addAttribute(zInvertedBlendShape.tweak_attr)
+    zInvertedBlendShape.attributeAffects(zInvertedBlendShape.tweak_attr, zInvertedBlendShape.inverted_tweak_attr)
+    zInvertedBlendShape.attributeAffects(zInvertedBlendShape.tweak_attr, MPxGeometryFilter_outputGeom)
 
     # A matrix per input vertex, giving the transform from the base shape to the current
     # pose of the mesh being sculpted.  Note that changing this will not automatically
     # update tweak_attr, since this doesn't seem to update attached tweakLocation meshes
     # correctly.  To force this update to happen, a value is written to .recalculateTweak.
-    sculptableInvertedBlendShape.matrix_attr = mAttr.create('inversionMatrix', 'im')
+    zInvertedBlendShape.matrix_attr = mAttr.create('inversionMatrix', 'im')
     mAttr.setArray(True)
     mAttr.setInternal(True)
     mAttr.setUsesArrayDataBuilder(True)
-    sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.matrix_attr)
-    # sculptableInvertedBlendShape.attributeAffects(sculptableInvertedBlendShape.matrix_attr, sculptableInvertedBlendShape.tweak_attr)
+    zInvertedBlendShape.addAttribute(zInvertedBlendShape.matrix_attr)
+    # zInvertedBlendShape.attributeAffects(zInvertedBlendShape.matrix_attr, zInvertedBlendShape.tweak_attr)
 
     # If true, we're currently sculpting.  Changes to .tweak will be inverted and copied
     # to .invertedTweak.
-    sculptableInvertedBlendShape.enable_tweak_attr = nAttr.create('enableTweak', 'et', OpenMaya.MFnNumericData.kBoolean)
-    sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.enable_tweak_attr)
+    zInvertedBlendShape.enable_tweak_attr = nAttr.create('enableTweak', 'et', OpenMaya.MFnNumericData.kBoolean)
+    zInvertedBlendShape.addAttribute(zInvertedBlendShape.enable_tweak_attr)
 
     # This is a hack: write to this attribute to force .tweak to be recalculated from
     # .invertedTweak.  We should use a command for this, but I can't find any way to
     # get our MPxDeformerNode instance from a command like you can natively.
-    sculptableInvertedBlendShape.recalculate_tweak_attr = nAttr.create('recalculateTweak', 'rct', OpenMaya.MFnNumericData.kBoolean)
+    zInvertedBlendShape.recalculate_tweak_attr = nAttr.create('recalculateTweak', 'rct', OpenMaya.MFnNumericData.kBoolean)
     nAttr.setStorable(False)
     nAttr.setKeyable(False)
     nAttr.setInternal(True)
-    sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.recalculate_tweak_attr)
+    zInvertedBlendShape.addAttribute(zInvertedBlendShape.recalculate_tweak_attr)
 
     # This attribute is only used to temporarily store the original tweak node while
     # we're redirecting tweaks for a mesh to us.
     #
     # We don't really need to enable usesArrayDataBuilder since this isn't meant to
     # actually receive data, but if it does and that's not enabled it can crash.
-    sculptableInvertedBlendShape.saved_tweak_connection_attr = nAttr.createPoint('savedTweakConnection', 'stc')
+    zInvertedBlendShape.saved_tweak_connection_attr = nAttr.createPoint('savedTweakConnection', 'stc')
     nAttr.setArray(True)
     nAttr.setUsesArrayDataBuilder(True)
-    sculptableInvertedBlendShape.addAttribute(sculptableInvertedBlendShape.saved_tweak_connection_attr)
+    zInvertedBlendShape.addAttribute(zInvertedBlendShape.saved_tweak_connection_attr)
 
 def initializePlugin(mobject):
     plugin = OpenMayaMPx.MFnPlugin(mobject)
-    plugin.registerNode('sculptableInvertedBlendShape', sculptableInvertedBlendShape.pluginNodeId, creator,
+    plugin.registerNode('zInvertedBlendShape', zInvertedBlendShape.pluginNodeId, creator,
             initialize, OpenMayaMPx.MPxNode.kDeformerNode)
 
 def uninitializePlugin(mobject):
     plugin = OpenMayaMPx.MFnPlugin(mobject)
-    plugin.deregisterNode(sculptableInvertedBlendShape.pluginNodeId)
+    plugin.deregisterNode(zInvertedBlendShape.pluginNodeId)
 

@@ -253,19 +253,19 @@ def _find_deformer(node):
 
     # The node may be the deformer itself, the inverted blend shape mesh, or the output mesh
     # whose tweak node is attached to the deformer.
-    if cmds.nodeType(node) == 'sculptableInvertedBlendShape':
+    if cmds.nodeType(node) == 'invertedBlendShape':
         return node
 
     if cmds.nodeType(node) == 'mesh':
-        # If the mesh's tweakLocation is connected to a sculptableInvertedBlendShape, we're updating the mesh
+        # If the mesh's tweakLocation is connected to a zInvertedBlendShape, we're updating the mesh
         # that's currently being sculpted.  This is the most common case.
-        connections = cmds.listConnections('%s.tweakLocation' % node, s=True, d=False, t='sculptableInvertedBlendShape')
+        connections = cmds.listConnections('%s.tweakLocation' % node, s=True, d=False, t='zInvertedBlendShape')
         if connections:
             return connections[0]
 
         # See if this is an output inverted blend shape mesh.
         for history_node in cmds.listHistory(node, gl=True, pdo=True) or []:
-            if 'sculptableInvertedBlendShape' in cmds.nodeType(history_node, inherited=True):
+            if 'zInvertedBlendShape' in cmds.nodeType(history_node, inherited=True):
                 return history_node
 
     return None
@@ -374,7 +374,7 @@ def update_inversion(node=None):
         for node in nodes:
             deformer = _find_deformer(node)
             if deformer is None:
-                OpenMaya.MGlobal.displayError('Couldn\'t find a sculptableInvertedBlendShape for: %s' % node)
+                OpenMaya.MGlobal.displayError('Couldn\'t find a zInvertedBlendShape for: %s' % node)
                 continue
 
             _update_inversion_for_deformer(deformer)
@@ -384,8 +384,8 @@ def update_inversion(node=None):
         cmds.undoInfo(closeChunk=True)
 
 def _load_plugin():
-    if not cmds.pluginInfo('sculptableInvertedBlendShape.py', query=True, loaded=True):
-        cmds.loadPlugin('sculptableInvertedBlendShape.py')
+    if not cmds.pluginInfo('zInvertedBlendShape.py', query=True, loaded=True):
+        cmds.loadPlugin('zInvertedBlendShape.py')
 
 def invert(base=None, name=None):
     """
@@ -448,7 +448,7 @@ def invert(base=None, name=None):
         cmds.setAttr('%s.weight[%i]' % (foc_blend_shape, blend_shape_index), 1)
 
         # Create the deformer.
-        deformer = cmds.deformer(inverted_shape, type='sculptableInvertedBlendShape')[0]
+        deformer = cmds.deformer(inverted_shape, type='zInvertedBlendShape')[0]
 
         # Hack: If we don't have at least one element in the array, compute() won't be called on it.
         cmds.setAttr('%s.invertedTweak[0]' % deformer, 0, 0, 0)
@@ -487,10 +487,10 @@ def invert_existing(inverted=None):
 
         print 'Shape: %s' % inverted_shape
 
-        # There shouldn't already be sculptableInvertedBlendShape deformer on the mesh.
+        # There shouldn't already be zInvertedBlendShape deformer on the mesh.
         for history_node in cmds.listHistory(inverted_shape):
-            if 'sculptableInvertedBlendShape' in cmds.nodeType(history_node, inherited=True):
-                OpenMaya.MGlobal.displayError('%s already has a sculptableInvertedBlendShape deformer (%s).' % (inverted, history_node))
+            if 'zInvertedBlendShape' in cmds.nodeType(history_node, inherited=True):
+                OpenMaya.MGlobal.displayError('%s already has a zInvertedBlendShape deformer (%s).' % (inverted, history_node))
                 return
 
         # Find the blendShape that the mesh feeds into.
@@ -521,7 +521,7 @@ def invert_existing(inverted=None):
         inverted_points_iterator.setAllPositions(blend_shape_input_points, OpenMaya.MSpace.kObject)
 
         # Create the deformer.
-        deformer = cmds.deformer(inverted_shape, type='sculptableInvertedBlendShape')[0]
+        deformer = cmds.deformer(inverted_shape, type='zInvertedBlendShape')[0]
 
         # Hack: If we don't have at least one element in the array, compute() won't be called on it.
         cmds.setAttr('%s.invertedTweak[0]' % deformer, 0, 0, 0)
@@ -647,7 +647,7 @@ def enable_editing(node=None):
             # final output shape, since we won't know which blend shape to enable.
             deformer = _find_deformer(node)
             if deformer is None:
-                OpenMaya.MGlobal.displayError('Couldn\'t find a sculptableInvertedBlendShape for: %s' % node)
+                OpenMaya.MGlobal.displayError('Couldn\'t find a zInvertedBlendShape for: %s' % node)
                 continue
 
             if _enable_editing_for_deformer(deformer):
@@ -706,7 +706,7 @@ def disable_editing(node=None):
             # final output shape, since we won't know which blend shape to enable.
             deformer = _find_deformer(node)
             if deformer is None:
-                OpenMaya.MGlobal.displayError('Couldn\'t find a sculptableInvertedBlendShape for: %s' % node)
+                OpenMaya.MGlobal.displayError('Couldn\'t find a zInvertedBlendShape for: %s' % node)
                 continue
 
             if _disable_editing_for_deformer(deformer):

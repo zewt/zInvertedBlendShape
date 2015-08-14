@@ -1,4 +1,4 @@
-global proc AEsculptableInvertedBlendShapeTemplate(string $nodeName)
+global proc AEzInvertedBlendShapeTemplate(string $nodeName)
 {
     editorTemplate -beginScrollLayout;
     editorTemplate -suppress "plist";
