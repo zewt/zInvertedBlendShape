@@ -91,12 +91,12 @@ def _find_visible_shape(transform):
     if cmds.nodeType(transform) == 'mesh':
         return transform
 
-    shapes = cmds.listRelatives(transform, children=True, shapes=True) or []
+    shapes = cmds.listRelatives(transform, children=True, shapes=True, path=True) or []
     for s in shapes:
         if cmds.getAttr('%s.intermediateObject' % s):
             continue
         return s
-    raise RuntimeError('No intermediate shape found for %s.' % transform)
+    raise RuntimeError('No visible shape found for %s.' % transform)
 
 def _find_first_blend_shape(node):
     blend_shapes = list(_find_blend_shapes(node))
@@ -253,7 +253,7 @@ def _find_deformer(node):
 
     # The node may be the deformer itself, the inverted blend shape mesh, or the output mesh
     # whose tweak node is attached to the deformer.
-    if cmds.nodeType(node) == 'invertedBlendShape':
+    if cmds.nodeType(node) == 'zInvertedBlendShape':
         return node
 
     if cmds.nodeType(node) == 'mesh':
@@ -363,7 +363,7 @@ def update_inversion(node=None):
     if node is not None:
         nodes = [node]
     else:
-        nodes = cmds.ls(sl=True)
+        nodes = cmds.ls(sl=True, l=True)
         
     if not nodes:
         OpenMaya.MGlobal.displayError('Select a blend shape or output mesh')
@@ -395,7 +395,7 @@ def invert(base=None, name=None):
     """
     _load_plugin()
     if not base:
-        sel = cmds.ls(sl=True)
+        sel = cmds.ls(sl=True, l=True)
         if not sel or len(sel) != 1:
             OpenMaya.MGlobal.displayError('Select a mesh to create an inverted blend shape for.')
             return
@@ -474,7 +474,7 @@ def invert_existing(inverted=None):
     cmds.undoInfo(openChunk=True)
     try:
         if not inverted:
-            sel = cmds.ls(sl=True)
+            sel = cmds.ls(sl=True, l=True)
             if not sel or not len(sel):
                 OpenMaya.MGlobal.displayError('Select an inverted mesh')
                 return
@@ -576,7 +576,7 @@ def _node_visible(node):
         if not cmds.getAttr('%s.overrideVisibility' % node):
             return False
 
-    parents = cmds.listRelatives(node, parent=True) or []
+    parents = cmds.listRelatives(node, parent=True, path=True) or []
     if parents:
         return _node_visible(parents[0])
 
@@ -593,7 +593,7 @@ def _enable_editing_for_deformer(deformer):
     # want to actually edit the shape now, so select the transform for the output mesh.  In the
     # unlikely case that there are multiple instances, we'll just pick one.  Do this even if the
     # blend shape is already selected for editing.
-    posed_mesh_transform = cmds.listRelatives(posed_mesh, p=True)
+    posed_mesh_transform = cmds.listRelatives(posed_mesh, p=True, path=True)
     cmds.select(posed_mesh_transform[0])
 
     # If something is already connected to our tweak input, we're already enabled.
@@ -634,7 +634,7 @@ def enable_editing(node=None):
     if node is not None:
         nodes = [node]
     else:
-        nodes = cmds.ls(sl=True)
+        nodes = cmds.ls(sl=True, l=True)
         
     if not nodes:
         OpenMaya.MGlobal.displayError('Select an inverted blend shape')
@@ -660,7 +660,7 @@ def _disable_editing_for_deformer(deformer):
     # Select the inverted blend shape, so we're symmetrical with what enable_editing does.
     # That way, enable_editing and disable_editing toggles back and forth cleanly.
     inverted_mesh_shape = _find_inverted_shape_for_deformer(deformer)
-    inverted_mesh = cmds.listRelatives(inverted_mesh_shape, p=True)[0]
+    inverted_mesh = cmds.listRelatives(inverted_mesh_shape, p=True, path=True)[0]
     cmds.select(inverted_mesh)
     
     posed_mesh = _get_active_sculpting_mesh_for_deformer(deformer)
@@ -693,7 +693,7 @@ def disable_editing(node=None):
     if node is not None:
         nodes = [node]
     else:
-        nodes = cmds.ls(sl=True)
+        nodes = cmds.ls(sl=True, l=True)
         
     if not nodes:
         OpenMaya.MGlobal.displayError('Select an inverted blend shape')
