@@ -1,3 +1,7 @@
+Maya 2016.5 adds built-in shape inversion, so this plugin is no longer needed.
+
+------------
+
 This Maya plug-in allows creating inverted blend shapes that can be sculpted
 in-place, like Maya 2016's blend shape sculpting.
 
